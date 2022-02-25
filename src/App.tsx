@@ -1,32 +1,26 @@
 import { useState, useEffect } from "react";
 import useWebSocket from "react-use-websocket";
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
-import { useThrottleFn, useReactive, useMemoizedFn } from "ahooks";
+import { useReactive, useMemoizedFn } from "ahooks";
 import dayjs from "dayjs";
-import { Dropdown, Col, Row, Button } from "antd";
-import "antd/dist/antd.css";
-
+import { Dropdown, Row, Button, Layout, Menu, Col, Card } from "antd";
+import { Content, Header } from "antd/lib/layout/layout";
 import {
   SOCKET_URL,
   API_KEY,
   subscribtionData,
+  SYMBOL_IDS,
   SubscriptionTypes,
+  ICoinData,
+  IMessageHistory,
 } from "./data";
-
-// interface Data {
-//   time_exchange: string;
-//   time_coinapi: string;
-//   ask_price: number;
-//   ask_size: number;
-//   bid_size: number;
-//   bid_price: number;
-//   symbol_id: string;
-//   sequence: number;
-//   type: string;
-// }
+import currency from "currency.js";
 
 interface IState {
   subscribeAssetId: SubscriptionTypes;
+  symbolId: SYMBOL_IDS;
+  latestPrice: string;
+  latestExchangeTime: string;
   socketCredentials: {
     type: string;
     apikey: string;
@@ -38,6 +32,9 @@ interface IState {
 const App = () => {
   const state = useReactive<IState>({
     subscribeAssetId: "ETH",
+    symbolId: SYMBOL_IDS.BINANCE_SPOT_ETH_USDT,
+    latestPrice: currency(0).format(),
+    latestExchangeTime: dayjs().format("MMM d, HH:mm"),
     socketCredentials: {
       type: "hello",
       apikey: API_KEY,
@@ -47,28 +44,33 @@ const App = () => {
   });
 
   const [socketUrl] = useState(SOCKET_URL);
-  const [messageHistory, setMessageHistory] = useState([]);
+  const [messageHistory, setMessageHistory] = useState<Array<IMessageHistory>>(
+    []
+  );
 
   const { sendMessage, lastMessage } = useWebSocket(socketUrl);
 
-  const { run } = useThrottleFn(
-    (coinInfo) => {
+  const retrieveCoinData = useMemoizedFn((coinInfo: ICoinData) => {
+    if (coinInfo?.symbol_id === state.symbolId)
       setMessageHistory((prev) => [
-        ...(prev.length > 10 ? prev.slice(1) : prev),
+        ...(prev.length > 9 ? prev.slice(1) : prev),
         {
-          name: dayjs(coinInfo.time_exchange).format("HH:mm"),
-          value: coinInfo.price,
+          time: dayjs(coinInfo.time_exchange),
+          price: coinInfo.price,
         },
       ]);
-    },
-    { wait: 100 }
-  );
+
+    state.latestPrice = currency(messageHistory.at(-1)?.price).format();
+    state.latestExchangeTime = dayjs(messageHistory.at(-1)?.time).format(
+      "MMM d, HH:mm"
+    );
+  });
 
   useEffect(() => {
     if (lastMessage !== null) {
-      run(JSON.parse(lastMessage.data));
+      retrieveCoinData(JSON.parse(lastMessage.data));
     }
-  }, [lastMessage, run]);
+  }, [lastMessage, retrieveCoinData]);
 
   useEffect(() => {
     sendMessage(
@@ -79,45 +81,52 @@ const App = () => {
     );
   }, [sendMessage, state.socketCredentials, state.subscribeAssetId]);
 
-  // const handleClickSendMessage = useCallback(
-  //   () =>
-  //     sendMessage(
-  //       JSON.stringify({
-  //         ...state.socketCredentials,
-  //         subscribe_filter_asset_id: [state.subscribeAssetId],
-  //       })
-  //     ),
-  //   [sendMessage, state.socketCredentials, state.subscribeAssetId]
-  // );
-
   const handleSubsription = useMemoizedFn((assetId: SubscriptionTypes) => {
+    setMessageHistory([]);
     state.subscribeAssetId = assetId;
+    state.symbolId =
+      assetId === "ETH"
+        ? SYMBOL_IDS.BINANCE_SPOT_ETH_USDT
+        : SYMBOL_IDS.BINANCE_SPOT_BTC_USDT;
   });
 
   return (
-    <Col>
-      <Row>
-        <Dropdown overlay={subscribtionData(handleSubsription)}>
-          <Button>{state.subscribeAssetId}</Button>
-        </Dropdown>
-      </Row>
-      {/* <button
-        onClick={handleClickSendMessage}
-        disabled={readyState !== ReadyState.OPEN}
-      >
-        Click Me to send 'Hello'
-      </button>
-      <button onClick={() => console.log(messageHistory, lastMessage)}>
-        Click Me to send 'Hello'
-      </button> */}
-
-      <LineChart width={500} height={300} data={messageHistory}>
-        <XAxis dataKey="name" />
-        <YAxis dataKey="value" markerHeight={1_000_000} />
-        <CartesianGrid strokeDasharray="5 5" />
-        <Line type="monotone" dataKey="value" />
-      </LineChart>
-    </Col>
+    <Layout className="layout">
+      <Header>
+        <Menu theme="dark" mode="horizontal" defaultSelectedKeys={["2"]}>
+          Crypto Chart
+          <Row
+            style={{
+              marginLeft: "2rem",
+              marginTop: "1rem",
+            }}
+          >
+            <Dropdown overlay={subscribtionData(handleSubsription)}>
+              <Button>{state.subscribeAssetId}</Button>
+            </Dropdown>
+          </Row>
+        </Menu>
+      </Header>
+      <Content style={{ padding: "2rem 50px" }}>
+        <Row>
+          <Col span={12}>
+            <LineChart width={500} height={500} data={messageHistory}>
+              <XAxis />
+              <YAxis dataKey="price" interval="preserveStartEnd" />
+              <CartesianGrid strokeDasharray="5 5" />
+              <Line type="monotone" dataKey="price" />
+            </LineChart>
+          </Col>
+          <Col span={12}>
+            <Card title="Market Data" style={{ width: 500, height: 480 }}>
+              <Row>Symbol: {state.subscribeAssetId}</Row>
+              <Row>Market Price: {state.latestPrice}</Row>
+              <Row>Exchange Time: {state.latestExchangeTime} </Row>
+            </Card>
+          </Col>
+        </Row>
+      </Content>
+    </Layout>
   );
 };
 
